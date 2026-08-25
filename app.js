@@ -6,7 +6,7 @@
    ═══════════════════════════════════════════════════════════ */
 
 const CONFIG = {
-  API: localStorage.getItem('cz_api') || 'http://localhost:8000/api/v1',
+  API: localStorage.getItem('cz_api') || 'https://18b3-115-242-248-222.ngrok-free.app/api/v1',
 };
 const apiRoot = () => CONFIG.API.replace(/\/api\/v1\/?$/, '');
 
@@ -108,6 +108,7 @@ async function api(path, opts = {}) {
   const h = { ...(opts.headers || {}) };
   if (!(opts.body instanceof FormData)) h['Content-Type'] = 'application/json';
   if (S.token) h['Authorization'] = 'Bearer ' + S.token;
+  h['ngrok-skip-browser-warning'] = 'true';
 
   let res;
   try {
