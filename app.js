@@ -6,7 +6,7 @@
    ═══════════════════════════════════════════════════════════ */
 
 const CONFIG = {
-  API: localStorage.getItem('cz_api') || 'https://fb9f-2401-4900-8f85-aaa5-c941-2f2d-de26-2d1c.ngrok-free.app/api/v1',
+  API: localStorage.getItem('cz_api') || 'https://9e8d-2401-4900-8f85-6a81-8422-3a71-9870-456e.ngrok-free.app/api/v1',
 };
 const apiRoot = () => CONFIG.API.replace(/\/api\/v1\/?$/, '');
 
