@@ -164,23 +164,28 @@ function countUp(root) {
 const APP = {
   apk: () => (window.CZ_CONFIG && window.CZ_CONFIG.APK_URL) || '',
   store: () => (window.CZ_CONFIG && window.CZ_CONFIG.PLAY_STORE_URL) || '',
-  best: () => APP.store() || APP.apk() || '',
-  available: () => !!(APP.store() || APP.apk()),
+  ios: () => (window.CZ_CONFIG && window.CZ_CONFIG.IOS_URL) || '',
+  // QR points to the device-neutral page if set, else the first available link
+  best: () => (window.CZ_CONFIG && window.CZ_CONFIG.APP_PAGE_URL) || APP.store() || APP.ios() || APP.apk() || '',
+  available: () => !!(APP.store() || APP.apk() || APP.ios()),
 };
 const storeButtons = (cls = '') => {
   if (!APP.available()) return `
     <div class="store-row ${cls}">
-      <span class="store-btn store-soon"><span class="store-ic">${I.android}</span>
-        <span><small>ANDROID APP</small><b>Coming soon</b></span></span>
+      <span class="store-btn store-soon"><span class="store-ic">${I.phone}</span>
+        <span><small>CODEZEN APP</small><b>Coming soon</b></span></span>
     </div>`;
   return `
   <div class="store-row ${cls}">
     ${APP.apk() ? `<a class="store-btn store-btn-apk" href="${esc(APP.apk())}" download rel="noopener">
       <span class="store-ic">${I.download}</span>
-      <span><small>DOWNLOAD FOR</small><b>Android (APK)</b></span></a>` : ''}
+      <span><small>DOWNLOAD</small><b>CodeZen APK</b></span></a>` : ''}
     ${APP.store() ? `<a class="store-btn" href="${esc(APP.store())}" target="_blank" rel="noopener">
       <span class="store-ic">${I.gplay}</span>
       <span><small>GET IT ON</small><b>Google Play</b></span></a>` : ''}
+    ${APP.ios() ? `<a class="store-btn" href="${esc(APP.ios())}" target="_blank" rel="noopener">
+      <span class="store-ic">${I.phone}</span>
+      <span><small>DOWNLOAD ON THE</small><b>App Store</b></span></a>` : ''}
   </div>`;
 };
 
@@ -208,13 +213,12 @@ async function drawQr(el, text) {
 function appModal() {
   const link = APP.best();
   const ready = APP.available();
-  const step2 = APP.apk() ? 'Download the APK and install it (allow "Install unknown apps" when Android asks)'
-    : 'Install CodeZen from Google Play';
+  const step2 = 'Install the CodeZen app on your phone';
   const m = modal(`
     <div class="app-modal">
       <div class="app-modal-head">
         <div class="app-modal-icon"><img src="logo.png" alt=""></div>
-        <div><h3>CodeZen for Android</h3>
+        <div><h3>CodeZen app</h3>
           <div class="tiny muted">Practice DSA, mock interviews & AI review on the go</div></div>
       </div>
       ${ready ? `
@@ -229,7 +233,7 @@ function appModal() {
       ${storeButtons('store-row-full')}` : `
       <div class="app-soon">
         <div class="app-soon-ic">${I.phone}</div>
-        <h4>The Android app is on its way</h4>
+        <h4>The CodeZen app is on its way</h4>
         <p>We're polishing the final build. Everything you do here — rooms, progress, saved work — will be waiting in the app with the same account.</p>
       </div>`}
       <button class="btn btn-ghost" style="width:100%;margin-top:16px" onclick="this.closest('.modal-bg').remove()">Close</button>
@@ -363,7 +367,7 @@ function shell(title, sub, body, opts = {}) {
       </nav>
       <button class="side-app" onclick="appModal()">
         <span class="side-app-ic">${I.phone}</span>
-        <span class="side-app-txt"><b>Get the app</b><small>${APP.available() ? 'CodeZen for Android' : 'Android · coming soon'}</small></span>
+        <span class="side-app-txt"><b>Get the app</b><small>${APP.available() ? 'On your phone' : 'Coming soon'}</small></span>
         <span class="side-app-arrow">${I.arrow}</span>
       </button>
       <div class="side-foot">
@@ -390,7 +394,7 @@ function shell(title, sub, body, opts = {}) {
           ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}
         </div>
         ${opts.actions || ''}
-        <button class="btn btn-ghost btn-sm topbar-app" onclick="appModal()" title="Get the Android app">${I.phone}<span>Get app</span></button>
+        <button class="btn btn-ghost btn-sm topbar-app" onclick="appModal()" title="Get the CodeZen app">${I.phone}<span>Get app</span></button>
       </header>
       ${opts.bare ? body : `<div class="page" id="pageScroll"><div class="page-narrow">${body}</div></div>`}
     </div>`;
@@ -433,7 +437,7 @@ function viewLogin() {
             </div>
 
             <div class="av-store">
-              <div class="av-store-label">${I.phone} ${APP.available() ? 'Also on Android' : 'Android app'}</div>
+              <div class="av-store-label">${I.phone} ${APP.available() ? 'Also on mobile' : 'CodeZen app'}</div>
               ${storeButtons()}
             </div>
           </div>
@@ -459,7 +463,7 @@ function viewLogin() {
             ${mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
         </form>
-        <button type="button" class="auth-app-link" onclick="appModal()">${I.phone} Get the CodeZen Android app ${I.arrow}</button>
+        <button type="button" class="auth-app-link" onclick="appModal()">${I.phone} Get the CodeZen app ${I.arrow}</button>
       </div></div></div>`;
 
     $$('.auth-tab').forEach(t => t.onclick = () => { mode = t.dataset.m; render(); });
