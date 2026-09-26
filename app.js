@@ -24,16 +24,8 @@ const _defaultApi = () => {
   const c = (window.CZ_CONFIG && window.CZ_CONFIG.API) || '';
   if (c) return c.replace(/\/$/, '');
   const h = location.hostname || 'localhost';
-  // Guessing "<host>:8000" only makes sense on your own machine / LAN.
-  // On Vercel/Netlify it produced https://your-app.vercel.app:8000 → request hangs forever.
-  if (/^(localhost|127\.|0\.0\.0\.0|192\.168\.|10\.)/.test(h) || location.protocol === 'file:')
-    return `http://${h === '' ? 'localhost' : h}:8000/api/v1`;
-  return location.origin + '/api/v1';
+  return `${location.protocol === 'https:' ? 'https:' : 'http:'}//${h}:8000/api/v1`;
 };
-if (!_servedByBackend() && !(window.CZ_CONFIG && window.CZ_CONFIG.API)
-    && !/^(localhost|127\.|0\.0\.0\.0|192\.168\.|10\.)/.test(location.hostname)) {
-  console.warn('[CodeZen] window.CZ_CONFIG.API is empty in config.js — set it to your backend URL, e.g. https://xxxx.ngrok-free.app/api/v1');
-}
 const CONFIG = {
   // When served by the backend, ignore any stale saved URL (e.g. an old ngrok tunnel)
   API: (_servedByBackend() ? null : (() => { try { return localStorage.getItem('cz_api'); } catch { return null; } })()) || _defaultApi(),
@@ -142,17 +134,11 @@ async function api(path, opts = {}) {
   h['ngrok-skip-browser-warning'] = 'true';
 
   let res;
-  // Never spin forever: unreachable backend → clear error after the timeout
-  const ctrl = new AbortController();
-  const timeoutMs = opts.timeout || (/\/(agent|chat|canvas)\b/.test(path) ? 120000 : 20000);
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    res = await fetch(CONFIG.API + path, { ...opts, headers: h, signal: ctrl.signal });
+    res = await fetch(CONFIG.API + path, { ...opts, headers: h });
   } catch (e) {
-    throw new Error(e.name === 'AbortError'
-      ? `Backend did not respond (${CONFIG.API}). Check the backend URL in config.js / Profile.`
-      : 'Cannot reach the backend. Is it running at ' + CONFIG.API + ' ?');
-  } finally { clearTimeout(timer); }
+    throw new Error('Cannot reach the backend. Is it running at ' + CONFIG.API + ' ?');
+  }
   if (res.status === 401) { logout(); throw new Error('Session expired — please sign in again'); }
   if (!res.ok) {
     let d = '';
