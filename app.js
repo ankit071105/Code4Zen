@@ -159,6 +159,8 @@ async function api(path, opts = {}) {
     // "body stream already read" and hides the real error).
     const raw = await res.text().catch(() => '');
     let d = '';
+    if (res.status === 405 || res.status === 404 && /"Not Found"/.test(raw))
+      throw new Error(`The running backend doesn't have this endpoint (${opts.method || 'GET'} ${path}, HTTP ${res.status}). Replace the backend files with the latest version and restart uvicorn.`);
     try { const j = JSON.parse(raw); d = j.detail ?? JSON.stringify(j); }
     catch {
       // Not JSON → the request never reached FastAPI (ngrok offline page, Vercel 404, proxy error…)
@@ -418,6 +420,7 @@ const roomRow = r => `<div class="list-item">
   </div>
   <a class="btn btn-soft btn-sm" href="#/editor/${r.id}">${I.code} Open</a>
   <a class="btn btn-ghost btn-sm" href="#/chat/${r.id}" title="Room AI chat">${I.chat}</a>
+  ${['owner', 'instructor'].includes(r.your_role) ? `<button class="btn btn-ghost btn-sm" data-inv-room="${r.id}" title="Invite members">${I.plus} Invite</button>` : ''}
   ${r.your_role === 'owner' ? `<button class="btn btn-danger btn-sm" data-del-room="${r.id}" title="Delete room">✕</button>` : ''}
 </div>`;
 
@@ -433,6 +436,7 @@ async function viewRooms() {
     S.rooms = await GET('/rooms/');
     $('#rl').innerHTML = S.rooms.length ? S.rooms.map(roomRow).join('')
       : `<div class="empty">${I.rooms}<h3>No rooms yet</h3><div class="tiny">Create your first room</div></div>`;
+    $$('[data-inv-room]').forEach(b => b.onclick = () => inviteModal(b.dataset.invRoom));
     $$('[data-del-room]').forEach(b => b.onclick = async () => {
       if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Sure?'; setTimeout(() => { b.dataset.confirm = ''; b.textContent = '✕'; }, 3000); return; }
       try { await DEL('/rooms/' + b.dataset.delRoom); toast('Room deleted', 'ok'); viewRooms(); } catch (e) { toast(e.message, 'err'); }
