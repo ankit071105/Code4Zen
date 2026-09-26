@@ -5,7 +5,7 @@
    PLAY_STORE_URL: fill ONLY after the app is live on Google Play (shows the Google Play badge).
    With neither set, the site shows "Android app · Coming soon" — no Play Store branding. */
 window.CZ_CONFIG = {
-  API: '',
+API: 'https://e993-2401-4900-8fd0-8222-cc4b-68ec-3644-a50b.ngrok-free.app/api/v1',
   APK_URL: '',
   PLAY_STORE_URL: '',
 };
