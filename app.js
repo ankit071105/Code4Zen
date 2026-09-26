@@ -100,6 +100,11 @@ const closeModals = () => $$('#modalRoot .modal-bg').forEach(m => m.remove());
 
 /* ───────────── icons ───────────── */
 const I = {
+  phone: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>',
+  download: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>',
+  android: '<svg fill="currentColor" viewBox="0 0 24 24"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.87 3.23a11.5 11.5 0 0 0-9.82 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg>',
+  gplay: '<svg viewBox="0 0 24 24"><path fill="#34A853" d="M3.6 2.2 13.5 12l-9.9 9.8c-.4-.2-.6-.7-.6-1.2V3.4c0-.5.2-1 .6-1.2z"/><path fill="#FBBC04" d="m17 8.5-3.5 3.5 3.5 3.5 4-2.3c.9-.5.9-1.9 0-2.4z"/><path fill="#EA4335" d="M3.6 21.8 13.5 12l3.5 3.5L5.2 22.1c-.6.3-1.2.2-1.6-.3z"/><path fill="#4285F4" d="M3.6 2.2c.4-.5 1-.6 1.6-.3L17 8.5 13.5 12z"/></svg>',
+  arrow: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
   home: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>',
   rooms: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 20V10h6v10"/></svg>',
   code: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="m9 18-6-6 6-6M15 6l6 6-6 6"/></svg>',
@@ -133,6 +138,86 @@ const I = {
   volume: '<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 8a5 5 0 0 1 0 8M19.5 5.5a9 9 0 0 1 0 13"/></svg>',
   stop: '<svg fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
 };
+
+/* Animated number count-up for stat tiles (respects reduced motion) */
+function countUp(root) {
+  if (!root || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  $$('[data-count]', root).forEach(el => {
+    const raw = el.dataset.count, m = raw.match(/^(\d+(?:\.\d+)?)(%?)$/);
+    if (!m) return;
+    const end = parseFloat(m[1]), suf = m[2], dec = m[1].includes('.') ? 1 : 0, t0 = performance.now(), dur = 900;
+    const tick = t => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = (end * e).toFixed(dec) + suf;
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/* ───────────── MOBILE APP LINKS ─────────────
+   Set in config.js:  APK_URL (direct .apk download) and/or PLAY_STORE_URL.
+   With neither set, users are sent to a Play Store search for "CodeZen". */
+const APP = {
+  apk: () => (window.CZ_CONFIG && window.CZ_CONFIG.APK_URL) || '',
+  store: () => (window.CZ_CONFIG && window.CZ_CONFIG.PLAY_STORE_URL) || '',
+  search: () => 'https://play.google.com/store/search?q=' + encodeURIComponent((window.CZ_CONFIG && window.CZ_CONFIG.APP_SEARCH) || 'CodeZen') + '&c=apps',
+  best: () => APP.store() || APP.apk() || APP.search(),
+};
+const storeButtons = (cls = '') => `
+  <div class="store-row ${cls}">
+    <a class="store-btn" href="${esc(APP.store() || APP.search())}" target="_blank" rel="noopener">
+      <span class="store-ic">${I.gplay}</span>
+      <span><small>${APP.store() ? 'GET IT ON' : 'SEARCH ON'}</small><b>Google Play</b></span></a>
+    ${APP.apk() ? `<a class="store-btn store-btn-alt" href="${esc(APP.apk())}" download rel="noopener">
+      <span class="store-ic">${I.android}</span>
+      <span><small>DIRECT DOWNLOAD</small><b>Android APK</b></span></a>` : ''}
+  </div>`;
+
+let _qrLib = null;
+function loadQr() {
+  if (window.qrcode) return Promise.resolve(window.qrcode);
+  if (_qrLib) return _qrLib;
+  _qrLib = new Promise((res, rej) => {
+    const sc = document.createElement('script');
+    sc.src = 'qrcode.js';   // vendored qrcode-generator (MIT) — no CDN dependency
+    sc.onload = () => res(window.qrcode); sc.onerror = rej;
+    document.head.appendChild(sc);
+  });
+  return _qrLib;
+}
+async function drawQr(el, text) {
+  try {
+    const qrcode = await loadQr();
+    const q = qrcode(0, 'M'); q.addData(text); q.make();
+    el.innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+    el.classList.add('ready');
+  } catch { el.innerHTML = `<div class="tiny muted">Scan unavailable offline</div>`; }
+}
+
+function appModal() {
+  const link = APP.best();
+  const m = modal(`
+    <div class="app-modal">
+      <div class="app-modal-head">
+        <div class="app-modal-icon"><img src="logo.png" alt=""></div>
+        <div><h3>CodeZen for Android</h3>
+          <div class="tiny muted">Practice DSA, mock interviews & AI review on the go</div></div>
+      </div>
+      <div class="app-modal-body">
+        <div class="qr-box" id="qrBox"><span class="spinner"></span></div>
+        <div class="app-modal-side">
+          <div class="app-step"><span>1</span><div>Scan the QR with your phone camera</div></div>
+          <div class="app-step"><span>2</span><div>${APP.store() ? 'Install from Google Play' : APP.apk() ? 'Download & install the APK' : 'Search <b>CodeZen</b> on Google Play'}</div></div>
+          <div class="app-step"><span>3</span><div>Sign in with the same account — your rooms & progress sync</div></div>
+        </div>
+      </div>
+      ${storeButtons('store-row-full')}
+      ${APP.apk() ? `<div class="tiny muted" style="margin-top:10px">Installing an APK? Allow "Install unknown apps" for your browser when Android asks.</div>` : ''}
+      <button class="btn btn-ghost" style="width:100%;margin-top:16px" onclick="this.closest('.modal-bg').remove()">Close</button>
+    </div>`);
+  drawQr($('#qrBox', m), link);
+}
 
 /* ───────────── API ───────────── */
 async function api(path, opts = {}) {
@@ -258,6 +343,11 @@ function shell(title, sub, body, opts = {}) {
         <div class="nav-label">AI TOOLS</div>
         ${ai.map(link).join('')}
       </nav>
+      <button class="side-app" onclick="appModal()">
+        <span class="side-app-ic">${I.phone}</span>
+        <span class="side-app-txt"><b>Get the app</b><small>CodeZen for Android</small></span>
+        <span class="side-app-arrow">${I.arrow}</span>
+      </button>
       <div class="side-foot">
         <a class="side-user" href="#/profile">
           <div class="avatar">${av ? `<img src="${av}" alt="">` : esc(initials(S.user?.name))}</div>
@@ -282,6 +372,7 @@ function shell(title, sub, body, opts = {}) {
           ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}
         </div>
         ${opts.actions || ''}
+        <button class="btn btn-ghost btn-sm topbar-app" onclick="appModal()" title="Get the Android app">${I.phone}<span>Get app</span></button>
       </header>
       ${opts.bare ? body : `<div class="page" id="pageScroll"><div class="page-narrow">${body}</div></div>`}
     </div>`;
@@ -300,13 +391,32 @@ function viewLogin() {
     $('#app').innerHTML = `
       <div class="auth-wrap">
         <div class="auth-visual">
+          <div class="av-orb av-orb-1"></div><div class="av-orb av-orb-2"></div>
           <div class="auth-visual-inner">
-            <div class="auth-visual-mark"><img src="logo.png" alt="CodeZen"></div>
-            <h2>CodeZen</h2>
-            <p>Draw the logic, we compile the code — and you keep the understanding.</p>
-            <div class="auth-visual-tags">
-              <span>Algorithm Canvas</span><span>AI Tutor that hints, not answers</span>
-              <span>Mock Interviews</span><span>Live Rooms</span>
+            <div class="av-top">
+              <div class="auth-visual-mark"><img src="logo.png" alt="CodeZen"></div>
+              <span class="av-badge">${I.spark} AI-powered coding practice</span>
+            </div>
+            <h2>Learn to code by <span class="grad-text">thinking</span>,<br>not copying.</h2>
+            <p>Draw the logic, get real code, and let AI review it like a senior engineer — then practise the interview.</p>
+
+            <div class="av-mock">
+              <div class="av-mock-bar"><i></i><i></i><i></i><span>binary_search.py</span></div>
+              <pre class="av-code"><span class="l"><b class="k">def</b> <b class="f">search</b>(arr, x):</span><span class="l">    lo, hi = <b class="n">0</b>, len(arr) - <b class="n">1</b></span><span class="l">    <b class="k">while</b> lo &lt;= hi:</span><span class="l">        mid = (lo + hi) // <b class="n">2</b></span><span class="l">        <b class="k">if</b> arr[mid] == x: <b class="k">return</b> mid</span><span class="l">        lo, hi = (mid+<b class="n">1</b>, hi) <b class="k">if</b> arr[mid] &lt; x <b class="k">else</b> (lo, mid-<b class="n">1</b>)</span></pre>
+              <div class="av-chip av-chip-1">${I.check} 5/5 tests passed</div>
+              <div class="av-chip av-chip-2">${I.spark} AI review · 9/10</div>
+            </div>
+
+            <div class="av-feats">
+              <div><span>${I.canvas}</span>Algorithm Canvas</div>
+              <div><span>${I.chat}</span>AI Tutor</div>
+              <div><span>${I.mic}</span>Mock Interviews</div>
+              <div><span>${I.rooms}</span>Live Rooms</div>
+            </div>
+
+            <div class="av-store">
+              <div class="av-store-label">${I.phone} Also on Android</div>
+              ${storeButtons()}
             </div>
           </div>
         </div>
@@ -327,10 +437,11 @@ function viewLogin() {
             <input class="input" name="email" type="email" placeholder="you@college.edu" required></div>
           <div class="field"><label class="label">Password</label>
             <input class="input" name="password" type="password" placeholder="••••••••" required minlength="8"></div>
-          <button class="btn btn-lg" style="width:100%;margin-top:6px" id="authBtn">
+          <button class="btn btn-lg btn-shine" style="width:100%;margin-top:6px" id="authBtn">
             ${mode === 'login' ? 'Sign in' : 'Create account'}
           </button>
         </form>
+        <button type="button" class="auth-app-link" onclick="appModal()">${I.phone} Get the CodeZen Android app ${I.arrow}</button>
       </div></div></div>`;
 
     $$('.auth-tab').forEach(t => t.onclick = () => { mode = t.dataset.m; render(); });
@@ -362,15 +473,18 @@ async function viewHome() {
     ['#/progress', 'Progress', 'See your weak areas', I.chart, 'var(--green)', 'var(--green-soft)'],
   ];
   shell(`Hi ${(S.user?.name || 'there').split(' ')[0]}`, 'Ready to build something today?', `
-    <div class="hero" style="margin-bottom:20px">
-      <div class="row between wrap" style="gap:16px">
-        <div style="min-width:240px">
-          <div style="font-size:20px;font-weight:800;margin-bottom:4px">Draw the logic. We'll write the code.</div>
-          <div style="opacity:.92;font-size:13.5px;max-width:460px">
-            Sketch your algorithm as a flowchart — a deterministic rule engine turns it into runnable Python. AI only steps in when a label is plain English.
-          </div>
+    <div class="hero hero-v2" style="margin-bottom:20px">
+      <div class="hero-glow"></div>
+      <div class="row between wrap" style="gap:18px;position:relative;z-index:1">
+        <div style="min-width:240px;max-width:560px">
+          <span class="hero-kicker">${I.spark} Today's focus</span>
+          <div class="hero-title">Draw the logic. <span class="grad-text">We'll write the code.</span></div>
+          <div class="hero-sub">Sketch your algorithm as a flowchart — a rule engine turns it into runnable Python. AI steps in only when a label is plain English.</div>
         </div>
-        <a href="#/canvas" class="btn">${I.bolt} Open Canvas</a>
+        <div class="row wrap" style="gap:10px">
+          <a href="#/canvas" class="btn btn-lg btn-shine">${I.bolt} Open Canvas</a>
+          <a href="#/interview" class="btn btn-lg btn-glass">${I.mic} Mock interview</a>
+        </div>
       </div>
     </div>
     <div id="statRow" style="margin-bottom:22px">${skelStats(4)}</div>
@@ -384,7 +498,28 @@ async function viewHome() {
       <div class="section-title" style="margin:0">Your rooms</div>
       <a href="#/rooms" class="btn btn-ghost btn-sm">See all</a>
     </div>
-    <div id="roomList">${skelRows(3)}</div>`);
+    <div id="roomList">${skelRows(3)}</div>
+    <div class="app-banner reveal">
+      <div class="app-banner-text">
+        <span class="hero-kicker">${I.phone} Mobile app</span>
+        <h3>Take CodeZen with you</h3>
+        <p>Mock interviews on the commute, AI review between classes. Same account, synced rooms and progress.</p>
+        ${storeButtons()}
+      </div>
+      <div class="app-banner-visual">
+        <div class="phone-frame">
+          <div class="phone-notch"></div>
+          <div class="phone-screen">
+            <div class="ps-head"><img src="logo.png" alt=""><b>CodeZen</b></div>
+            <div class="ps-card"><i style="width:70%"></i><i style="width:45%"></i></div>
+            <div class="ps-card ps-accent"><i style="width:60%"></i><i style="width:80%"></i></div>
+            <div class="ps-card"><i style="width:50%"></i><i style="width:35%"></i></div>
+          </div>
+        </div>
+        <button class="qr-mini" id="homeQr" onclick="appModal()" title="Scan to get the app"><span class="spinner"></span></button>
+      </div>
+    </div>`);
+  drawQr($('#homeQr'), APP.best());
 
   try {
     const [rooms, prog] = await Promise.all([
@@ -394,13 +529,14 @@ async function viewHome() {
     S.rooms = rooms || [];
     const st = (ic, v, l, c, bg) => `<div class="stat">
       <div class="stat-icon" style="background:${bg};color:${c}">${ic}</div>
-      <div class="stat-val">${v}</div><div class="stat-lbl">${l}</div></div>`;
+      <div class="stat-val" data-count="${esc(String(v))}">${v}</div><div class="stat-lbl">${l}</div></div>`;
     $('#statRow').innerHTML = `<div class="grid g4">` +
       st(I.bolt, S.user?.xp ?? 0, 'XP points', 'var(--cyan)', 'var(--cyan-soft)') +
       st(I.fire, S.user?.streak ?? 0, 'Day streak', 'var(--amber)', 'var(--amber-soft)') +
       st(I.rooms, S.rooms.length, 'Rooms', 'var(--purple)', 'var(--purple-soft)') +
       st(I.check, prog ? (prog.success_rate ?? 0) + '%' : '—', 'Success rate', 'var(--green)', 'var(--green-soft)') +
       `</div>`;
+    countUp($('#statRow'));
 
     $('#roomList').innerHTML = S.rooms.length ? S.rooms.slice(0, 4).map(roomRow).join('')
       : `<div class="empty">${I.rooms}<h3>No rooms yet</h3>
