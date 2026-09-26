@@ -5,10 +5,33 @@
    Pyodide (real sys.settrace — no LLM, no server round-trip).
    ═══════════════════════════════════════════════════════════ */
 
+/* Backend URL resolution (first match wins):
+   1. ?api=https://... in the page URL (saved to localStorage)
+   2. localStorage 'cz_api'           (set from Profile → Backend URL)
+   3. window.CZ_CONFIG.API            (config.js — set this once when deploying)
+   4. same machine :8000              (local dev) */
+(() => {
+  try {
+    const q = new URLSearchParams(location.search).get('api');
+    if (q) localStorage.setItem('cz_api', q.replace(/\/$/, '') + (/\/api\/v1$/.test(q) ? '' : '/api/v1'));
+  } catch { }
+})();
+const _servedByBackend = () => location.pathname.startsWith('/app');
+const _defaultApi = () => {
+  // Frontend served by the backend (/app) → API is on the same origin. Always right,
+  // works through ngrok / Render with zero config.
+  if (_servedByBackend()) return location.origin + '/api/v1';
+  const c = (window.CZ_CONFIG && window.CZ_CONFIG.API) || '';
+  if (c) return c.replace(/\/$/, '');
+  const h = location.hostname || 'localhost';
+  return `${location.protocol === 'https:' ? 'https:' : 'http:'}//${h}:8000/api/v1`;
+};
 const CONFIG = {
-    API: localStorage.getItem('cz_api') || 'https://ac54-2401-4900-8fd0-8222-cc4b-68ec-3644-a50b.ngrok-free.app/api/v1',
+  // When served by the backend, ignore any stale saved URL (e.g. an old ngrok tunnel)
+  API: (_servedByBackend() ? null : (() => { try { return localStorage.getItem('cz_api'); } catch { return null; } })()) || _defaultApi(),
 };
 const apiRoot = () => CONFIG.API.replace(/\/api\/v1\/?$/, '');
+const wsRoot = () => apiRoot().replace(/^http/, 'ws');
 
 /* ───────────── theme ───────────── */
 function applyTheme(t) { document.documentElement.setAttribute('data-theme', t); }
@@ -152,7 +175,7 @@ const ROUTES = {
   '/login': viewLogin, '/home': viewHome, '/rooms': viewRooms,
   '/editor': viewEditor, '/canvas': viewCanvas, '/chat': viewChat,
   '/interview': viewInterview, '/progress': viewProgress,
-  '/saved': viewSaved, '/profile': viewProfile,
+  '/saved': viewSaved, '/profile': viewProfile, '/join': viewJoin,
 };
 
 function go(h) { location.hash = h; }
@@ -164,7 +187,12 @@ function router() {
   const route = '/' + (path || 'home');
   S.route = route; S.params = { id: rest[0] || null };
 
+  if (!S.token && route === '/join' && S.params.id) {
+    try { localStorage.setItem('cz_pending_invite', S.params.id); } catch { }
+    toast('Sign in to join the room', 'ok');
+  }
   if (!S.token && route !== '/login') return go('#/login');
+  if (prevRoute === '/editor' && route !== '/editor') Collab.disconnect();
   if (S.token && route === '/login') return go('#/home');
 
   if (prevRoute === '/interview' && route !== '/interview') {
@@ -289,7 +317,9 @@ function viewLogin() {
       const f = Object.fromEntries(new FormData(e.target));
       try {
         const d = await POST(mode === 'login' ? '/auth/login' : '/auth/register', f);
-        saveAuth(d); toast('Welcome, ' + (d.user?.name || '') + '!', 'ok'); go('#/home');
+        saveAuth(d); toast('Welcome, ' + (d.user?.name || '') + '!', 'ok');
+        let pending = null; try { pending = localStorage.getItem('cz_pending_invite'); } catch { }
+        go(pending ? '#/join/' + pending : '#/home');
       } catch (err) {
         toast(err.message, 'err');
         btn.disabled = false; btn.textContent = mode === 'login' ? 'Sign in' : 'Create account';
@@ -303,7 +333,7 @@ function viewLogin() {
 async function viewHome() {
   const tools = [
     ['#/canvas', 'Algorithm Canvas', 'Draw logic, get real code', I.canvas, 'var(--cyan)', 'var(--cyan-soft)'],
-    ['#/chat', 'AI Tutor', 'Hints, never answers', I.chat, 'var(--purple)', 'var(--purple-soft)'],
+    ['#/chat', 'AI Tutor', 'Concepts & debugging help', I.chat, 'var(--purple)', 'var(--purple-soft)'],
     ['#/interview', 'Mock Interview', 'Practice a real round', I.mic, 'var(--amber)', 'var(--amber-soft)'],
     ['#/progress', 'Progress', 'See your weak areas', I.chart, 'var(--green)', 'var(--green-soft)'],
   ];
@@ -365,7 +395,8 @@ const roomRow = r => `<div class="list-item">
     </div>
   </div>
   <a class="btn btn-soft btn-sm" href="#/editor/${r.id}">${I.code} Open</a>
-  <a class="btn btn-ghost btn-sm" href="#/chat/${r.id}">${I.chat}</a>
+  <a class="btn btn-ghost btn-sm" href="#/chat/${r.id}" title="Room AI chat">${I.chat}</a>
+  ${r.your_role === 'owner' ? `<button class="btn btn-danger btn-sm" data-del-room="${r.id}" title="Delete room">✕</button>` : ''}
 </div>`;
 
 /* ═══════════════ ROOMS ═══════════════ */
@@ -380,6 +411,10 @@ async function viewRooms() {
     S.rooms = await GET('/rooms/');
     $('#rl').innerHTML = S.rooms.length ? S.rooms.map(roomRow).join('')
       : `<div class="empty">${I.rooms}<h3>No rooms yet</h3><div class="tiny">Create your first room</div></div>`;
+    $$('[data-del-room]').forEach(b => b.onclick = async () => {
+      if (b.dataset.confirm !== '1') { b.dataset.confirm = '1'; b.textContent = 'Sure?'; setTimeout(() => { b.dataset.confirm = ''; b.textContent = '✕'; }, 3000); return; }
+      try { await DEL('/rooms/' + b.dataset.delRoom); toast('Room deleted', 'ok'); viewRooms(); } catch (e) { toast(e.message, 'err'); }
+    });
   } catch (e) { $('#rl').innerHTML = `<div class="empty"><h3>${esc(e.message)}</h3></div>`; }
 }
 
@@ -398,17 +433,23 @@ function newRoomModal() {
     </form>`);
   $('#nrf', m).onsubmit = async e => {
     e.preventDefault();
+    const btn = e.target.querySelector('button:not([type=button])');
+    const body = Object.fromEntries(new FormData(e.target));
+    body.name = (body.name || '').trim();
+    if (!body.name) { toast('Give the room a name', 'err'); return; }
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
     try {
-      const r = await POST('/rooms/', Object.fromEntries(new FormData(e.target)));
+      const r = await POST('/rooms/', body);
+      S.editor.code = ''; S.editor.lang = r.language || body.language;
       m.remove(); toast('Room created', 'ok'); go('#/editor/' + r.id);
-    } catch (err) { toast(err.message, 'err'); }
+    } catch (err) { toast(err.message, 'err'); btn.disabled = false; btn.textContent = 'Create'; }
   };
 }
 
 function joinRoomModal() {
-  const m = modal(`<h3>Join a room</h3><div class="tiny muted" style="margin-bottom:16px">Paste the invite token you were given</div>
+  const m = modal(`<h3>Join a room</h3><div class="tiny muted" style="margin-bottom:16px">Paste the invite link or token you were given</div>
     <form id="jrf">
-      <div class="field"><input class="input" name="invite_token" placeholder="Invite token" required></div>
+      <div class="field"><input class="input" name="invite_token" placeholder="Invite link or token" required></div>
       <div class="row" style="gap:8px">
         <button type="button" class="btn btn-ghost" style="flex:1" onclick="this.closest('.modal-bg').remove()">Cancel</button>
         <button class="btn" style="flex:1">Join</button></div>
@@ -491,10 +532,134 @@ const STARTERS = {
   c: '#include <stdio.h>\n\nint main() {\n    for (int i = 0; i < 5; i++) printf("%d\\n", i);\n    return 0;\n}\n',
 };
 
+/* ═══════════════ REAL-TIME ROOM COLLAB (WebSocket) ═══════════════
+   Protocol (backend app/websocket/collab.py):
+     → {type:'op', op:{type:'set', text}}   whole-doc sync, debounced
+     ← init {code_snapshot, online_users, your_role} | op | user_joined | user_left
+   Whole-document "set" is simple and converges: every client ends on the
+   last snapshot, the server persists it, reconnects re-sync from init. */
+const Collab = {
+  ws: null, roomId: null, onRemote: null, onPresence: null, onStatus: null,
+  role: null, online: [], _timer: null, _ping: null, _retry: 0, _closing: false, _lastSent: null,
+  connect(roomId, handlers) {
+    this.disconnect();
+    Object.assign(this, handlers, { roomId, _closing: false });
+    this._open();
+  },
+  _open() {
+    if (!this.roomId || !S.token) return;
+    let ws;
+    try { ws = new WebSocket(`${wsRoot()}/ws/collab/${this.roomId}?token=${encodeURIComponent(S.token)}`); }
+    catch { this.onStatus?.('offline'); return; }
+    this.ws = ws;
+    this.onStatus?.('connecting');
+    ws.onopen = () => {
+      this._retry = 0; this.onStatus?.('live');
+      clearInterval(this._ping);
+      this._ping = setInterval(() => { if (ws.readyState === 1) ws.send('{"type":"ping"}'); }, 25000);
+    };
+    ws.onmessage = ev => {
+      let m; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === 'init') {
+        this.role = m.your_role; this.online = m.online_users || [];
+        this.onRemote?.(m.code_snapshot ?? '', true); this.onPresence?.(this.online, m.your_role);
+      } else if (m.type === 'op' && m.op) {
+        if (m.op.type === 'set') this.onRemote?.(m.op.text ?? '', false, m.user_name);
+      } else if (m.type === 'user_joined' || m.type === 'user_left') {
+        this.online = m.online_users || this.online; this.onPresence?.(this.online, this.role);
+        toast(`${m.user_name || 'Someone'} ${m.type === 'user_joined' ? 'joined' : 'left'} the room`);
+      } else if (m.type === 'error') toast(m.message, 'err');
+      else if (m.type === 'room_lock_changed') toast(m.locked ? 'Room locked by owner' : 'Room unlocked');
+    };
+    ws.onclose = ev => {
+      clearInterval(this._ping);
+      if (this._closing || this.ws !== ws) return;
+      if ([4001, 4003, 4004, 4005].includes(ev.code)) {
+        this.onStatus?.('offline');
+        toast(ev.reason || 'Could not join live session', 'err');
+        return;
+      }
+      this.onStatus?.('reconnecting');
+      const wait = Math.min(15000, 1000 * 2 ** this._retry++);
+      setTimeout(() => { if (!this._closing && this.ws === ws) this._open(); }, wait);
+    };
+  },
+  send(text) {
+    if (this.role === 'viewer') return;
+    clearTimeout(this._timer);
+    this._timer = setTimeout(() => {
+      if (this.ws?.readyState === 1 && text !== this._lastSent) {
+        this.ws.send(JSON.stringify({ type: 'op', op: { type: 'set', text }, revision: (this._rev = (this._rev || 0) + 1) }));
+        this._lastSent = text;
+      }
+    }, 350);
+  },
+  disconnect() {
+    this._closing = true;
+    clearTimeout(this._timer); clearInterval(this._ping);
+    try { this.ws?.close(); } catch { }
+    this.ws = null; this.roomId = null; this.online = []; this._lastSent = null;
+  },
+};
+
+async function viewJoin() {
+  const token = S.params.id;
+  try { localStorage.removeItem('cz_pending_invite'); } catch { }
+  shell('Joining room', '', `<div class="empty"><span class="spinner"></span><h3 style="margin-top:12px">Joining room…</h3></div>`);
+  if (!token) return go('#/rooms');
+  try {
+    const r = await POST('/rooms/join', { invite_token: token });
+    toast('Joined ' + (r.name || 'room'), 'ok');
+    S.editor.code = ''; go('#/editor/' + r.id);
+  } catch (e) { toast(e.message, 'err'); go('#/rooms'); }
+}
+
+function inviteModal(roomId) {
+  const m = modal(`<h3>Invite to room</h3><div class="tiny muted" style="margin-bottom:16px">Anyone with the link can join after signing in</div>
+    <div class="field"><label class="label">Role</label>
+      <select class="select" id="invRole"><option value="editor">Editor — can edit & run</option>
+      <option value="viewer">Viewer — read only</option><option value="instructor">Instructor — can invite & lock</option></select></div>
+    <div class="field"><label class="label">Expires in</label>
+      <select class="select" id="invExp"><option value="24">24 hours</option><option value="168">7 days</option><option value="1">1 hour</option></select></div>
+    <button class="btn" style="width:100%" id="invGen">Create invite link</button>
+    <div id="invOut" style="margin-top:14px"></div>
+    <button class="btn btn-ghost" style="width:100%;margin-top:14px" onclick="this.closest('.modal-bg').remove()">Close</button>`);
+  $('#invGen', m).onclick = async () => {
+    const b = $('#invGen', m); b.disabled = true;
+    try {
+      const r = await POST(`/rooms/${roomId}/invite`, { role: $('#invRole', m).value, expires_hours: +$('#invExp', m).value });
+      // Build the link from where THIS frontend is hosted, so it works on any deploy
+      const link = `${location.origin}${location.pathname}#/join/${r.invite_token}`;
+      const local = /^(localhost|127\.|0\.0\.0\.0|192\.168\.)/.test(location.hostname);
+      $('#invOut', m).innerHTML = `<label class="label">Invite link</label>
+        <div class="row"><input class="input mono" id="invLink" readonly value="${esc(link)}" style="font-size:12px">
+        <button class="btn btn-soft btn-sm" id="invCopy">Copy</button></div>
+        <div class="tiny muted" style="margin-top:8px">Or share just the token — they can paste it in Rooms → Join:</div>
+        <div class="row" style="margin-top:4px"><input class="input mono" readonly value="${esc(r.invite_token)}" style="font-size:11px">
+        <button class="btn btn-ghost btn-sm" id="invCopyTok">Copy token</button></div>
+        ${local ? `<div class="tiny" style="margin-top:10px;color:var(--amber)">⚠ You opened CodeZen on <b>${esc(location.host)}</b> — this link only works on your computer.
+          For friends, open the app from your public URL: <code>https://&lt;your-ngrok&gt;.ngrok-free.app/app/</code></div>` : ''}`;
+      const copy = async () => {
+        try { await navigator.clipboard.writeText(link); toast('Link copied', 'ok'); }
+        catch { $('#invLink', m).select(); document.execCommand('copy'); toast('Link copied', 'ok'); }
+      };
+      $('#invCopy', m).onclick = copy; copy();
+      $('#invCopyTok', m).onclick = async () => {
+        try { await navigator.clipboard.writeText(r.invite_token); toast('Token copied', 'ok'); } catch { toast('Copy failed — select and copy manually', 'err'); }
+      };
+    } catch (e) { toast(e.message, 'err'); }
+    b.disabled = false;
+  };
+}
+
 async function viewEditor() {
   const E = S.editor;
+  const prevRoom = E.roomId;
   E.roomId = S.params.id || null;
-  if (!E.code) E.code = STARTERS[E.lang];
+  if (E.roomId !== prevRoom) { E.review = null; E.tests = null; E.stdout = ''; E.stderr = ''; E.trace = null; }
+  if (E.roomId && E.roomId !== prevRoom) E.code = '';
+  if (prevRoom && !E.roomId) E.code = STARTERS[E.lang];
+  if (!E.code && !E.roomId) E.code = STARTERS[E.lang];
 
   shell('Code Editor', E.roomId ? 'Room session' : 'Scratch pad', `
     <div class="editor-shell">
@@ -504,6 +669,9 @@ async function viewEditor() {
         </select>
         <button class="btn btn-green btn-sm" id="runBtn">${I.play} Run</button>
         <button class="btn btn-amber btn-sm" id="dbgBtn">${I.bug} Debug</button>
+        ${E.roomId ? `<span class="pill pill-gray" id="roomStatus" title="Live collaboration">● connecting</span>
+          <span class="pill pill-purple" id="roomPeople" style="display:none"></span>
+          <button class="btn btn-ghost btn-sm" id="invBtn" style="display:none">${I.plus} Invite</button>` : ''}
         <div style="flex:1"></div>
         <button class="btn btn-ghost btn-sm" id="cxBtn">${I.gauge} Complexity</button>
         <button class="btn btn-ghost btn-sm" id="saveCodeBtn">${I.book} Save</button>
@@ -552,13 +720,50 @@ async function viewEditor() {
   sync();
 
   if (E.roomId) {
-    try { const r = await GET('/rooms/' + E.roomId); if (r.code) { ta.value = r.code; E.lang = r.language || E.lang; $('#langSel').value = E.lang; sync(); } } catch { }
+    const roomId = E.roomId;
+    try {
+      const r = await GET('/rooms/' + roomId);
+      if (S.editor.roomId !== roomId) return;           // navigated away meanwhile
+      E.lang = r.language || E.lang; $('#langSel').value = E.lang;
+      const code = r.code_snapshot ?? r.code ?? '';
+      ta.value = code || STARTERS[E.lang]; sync();
+      $('.topbar .sub') && ($('.topbar .sub').textContent = 'Room · ' + r.name);
+      if (['owner', 'instructor'].includes(r.your_role)) { const b = $('#invBtn'); b.style.display = ''; b.onclick = () => inviteModal(roomId); }
+      if (r.your_role === 'viewer') { ta.readOnly = true; toast('You joined as a viewer (read-only)'); }
+    } catch (e) { toast(e.message, 'err'); }
+
+    Collab.connect(roomId, {
+      onRemote: (text, isInit, who) => {
+        if (isInit && !text) { Collab.send(ta.value); return; }   // empty room → publish our starter
+        if (text === ta.value) return;
+        const { selectionStart: a, selectionEnd: b, scrollTop } = ta;
+        ta.value = text; Collab._lastSent = text;
+        ta.selectionStart = Math.min(a, text.length); ta.selectionEnd = Math.min(b, text.length); ta.scrollTop = scrollTop;
+        sync();
+      },
+      onPresence: (online) => {
+        const p = $('#roomPeople'); if (!p) return;
+        p.style.display = ''; p.textContent = `${online.length} online`;
+      },
+      onStatus: st => {
+        const el = $('#roomStatus'); if (!el) return;
+        el.className = 'pill ' + (st === 'live' ? 'pill-green' : st === 'offline' ? 'pill-red' : 'pill-amber');
+        el.textContent = '● ' + ({ live: 'live', connecting: 'connecting', reconnecting: 'reconnecting', offline: 'offline' }[st] || st);
+      },
+    });
+    ta.addEventListener('input', () => Collab.send(ta.value));
+  } else {
+    Collab.disconnect();
   }
 
   $('#langSel').onchange = e => {
     E.lang = e.target.value;
     if (!ta.value.trim() || Object.values(STARTERS).includes(ta.value)) { ta.value = STARTERS[E.lang]; }
     E.trace = null; sync(); paintPanel();
+    if (E.roomId) {
+      Collab.send(ta.value);
+      PATCH(`/rooms/${E.roomId}/code`, { code: ta.value, language: E.lang }).catch(() => { });
+    }
   };
   $$('.sp-tab').forEach(t => t.onclick = () => {
     $$('.sp-tab').forEach(x => x.classList.remove('active'));
@@ -571,6 +776,9 @@ async function viewEditor() {
   $('#saveCodeBtn').onclick = async () => {
     const btn = $('#saveCodeBtn'); btn.disabled = true;
     try {
+      if (E.roomId) {
+        await PATCH(`/rooms/${E.roomId}/code`, { code: ta.value, language: E.lang });
+      }
       const firstLine = (ta.value.split('\n').find(l => l.trim()) || 'Untitled').trim().slice(0, 40);
       await POST('/saved', {
         item_type: 'editor_code',
@@ -725,7 +933,10 @@ async function viewEditor() {
   };
 }
 
-const renderReview = r => `
+const renderReview = r => r.error ? `
+  <div class="sp-label">AI REVIEW</div>
+  <div class="out-block out-err" style="margin-bottom:10px">${esc(r.summary || 'Review failed')}</div>
+  <button class="btn btn-sm" style="width:100%" onclick="document.getElementById('revBtn').click()">Try again</button>` : `
   <div class="row" style="gap:10px;margin-bottom:12px">
     <div style="width:46px;height:46px;border-radius:50%;display:grid;place-items:center;
       background:${(r.overall_score ?? 0) >= 7 ? 'rgba(18,161,95,.18)' : 'rgba(217,139,11,.18)'};
@@ -746,26 +957,29 @@ const sec = (t, arr, c) => (arr && arr.length) ? `<div class="sp-label">${t}</di
 const renderTests = t => {
   const res = t.results || t.test_results || [];
   if (!res.length) {
-    const generated = t.test_cases || t.tests || [];
     return `<div class="sp-label">TEST CASES</div>
       <div class="tiny" style="color:${t.error ? '#FF9BA4' : '#8FB3C0'};margin-bottom:10px">
-        ${t.error ? esc(t.error) : (generated.length ? `${generated.length} test case(s) generated but not executed yet.` : 'No test cases available.')}
-      </div>
-      ${generated.map(g => `<div class="out-block" style="margin-bottom:8px">
-        <div style="color:#818CF8;font-weight:600;margin-bottom:4px">${esc(g.name || g.description || 'Case')}</div>
-        ${g.input !== undefined ? `<div style="color:#8FB3C0;font-size:11.5px">Input: ${esc(String(g.input))}</div>` : ''}
-        ${g.expected_output !== undefined ? `<div style="color:#8FB3C0;font-size:11.5px">Expected: ${esc(String(g.expected_output))}</div>` : ''}
-      </div>`).join('')}
-      ${t.error ? `<button class="btn btn-sm" style="margin-top:6px" onclick="czTests()">Try again</button>` : ''}`;
+        ${esc(t.error || 'No test cases available.')}</div>
+      <button class="btn btn-sm" style="margin-top:6px" onclick="czTests()">Try again</button>`;
   }
   const pass = res.filter(r => r.passed).length;
-  return `<div class="sp-label">TEST CASES (${pass}/${res.length} ran clean)</div>
-    ${res.map(r => `<div class="out-block" style="margin-bottom:8px;border-color:${r.passed ? 'rgba(18,161,95,.35)' : 'rgba(214,69,80,.35)'}">
-      <div style="color:${r.passed ? '#3ED18F' : '#FF9BA4'};font-weight:700;margin-bottom:4px">
-        ${r.passed ? '✓' : '✗'} ${esc(r.name || 'Test')}</div>
-      <div style="color:#8FB3C0;font-size:11.5px;margin-bottom:6px">${esc(r.description || '')}</div>
-      ${r.stdout ? esc(r.stdout.trim()) : ''}${r.stderr ? `<div style="color:#FF9BA4">${esc(r.stderr.trim())}</div>` : ''}
-    </div>`).join('')}`;
+  const modeNote = t.mode === 'stdin' ? 'Fed each input to your program via stdin'
+    : t.mode === 'run' ? 'Ran your program as-is' : 'Called your function with a generated driver';
+  const pre = (label, v, color) => (v === null || v === undefined || String(v) === '') ? '' :
+    `<div style="color:#7C8494;font-size:10.5px;margin-top:6px">${label}</div>
+     <div style="color:${color};white-space:pre-wrap">${esc(String(v).trim())}</div>`;
+  return `<div class="sp-label">TEST CASES — ${pass}/${res.length} PASSED</div>
+    <div class="tiny" style="color:#7C8494;margin-bottom:10px">${esc(modeNote)}${t.note ? ' · ' + esc(t.note) : ''}</div>
+    ${res.map(r => `<div class="out-block" style="white-space:normal;margin-bottom:8px;border-color:${r.passed ? 'rgba(18,161,95,.35)' : 'rgba(214,69,80,.35)'}">
+      <div style="color:${r.passed ? '#3ED18F' : '#FF9BA4'};font-weight:700">
+        ${r.passed ? '✓' : '✗'} ${esc(r.name || 'Test')}${r.timed_out ? ' · timed out' : ''}</div>
+      ${r.description ? `<div style="color:#8FB3C0;font-size:11.5px;margin-top:2px">${esc(r.description)}</div>` : ''}
+      ${pre('INPUT', r.input, '#C7CCDA')}
+      ${pre('EXPECTED', r.expected_output, '#C7CCDA')}
+      ${pre('YOUR OUTPUT', r.stdout, r.passed ? '#3ED18F' : '#F0B95B')}
+      ${pre('ERROR', r.stderr, '#FF9BA4')}
+    </div>`).join('')}
+    <button class="btn btn-ghost btn-sm" style="width:100%;margin-top:6px" onclick="czTests()">Regenerate</button>`;
 };
 
 /* ═══════════════ ALGORITHM CANVAS ═══════════════ */
@@ -1090,7 +1304,7 @@ function extractCodeBlocks(rawText) {
 function viewChat() {
   const K = S.chat;
   K.roomId = S.params.id || null;
-  shell('AI Tutor', 'Asks you questions — never hands over the answer', `
+  shell('AI Tutor', 'Concepts, DSA & debugging — explained step by step', `
     <div class="chat-shell">
       <div class="chat-scroll" id="chatScroll"><div class="chat-inner" id="chatInner"></div></div>
       <div class="chat-bar"><div class="chat-bar-inner">
@@ -1116,9 +1330,9 @@ function viewChat() {
         <div class="bubble ai" style="padding:0"><div class="typing"><span></span><span></span><span></span></div></div></div>` : '')
       : `<div class="empty">${I.chat}<h3>Ask me anything</h3>
         <div class="tiny" style="max-width:340px;margin:0 auto">
-        I'll give you hints and questions to think through — not finished code. That's on purpose.</div>
+        Ask a concept, an algorithm, or paste code that's failing — I'll explain it step by step with examples.</div>
         <div class="chips" style="justify-content:center;margin-top:18px">
-        ${['What is a binary search tree?', 'Why is my recursion overflowing?', 'Explain time complexity']
+        ${['Explain binary search with code', 'TCP vs UDP', 'Why is my recursion overflowing?', 'What is dynamic programming?']
           .map(q => `<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></div>`;
     $$('[data-q]', inner).forEach(b => b.onclick = () => { inp.value = b.dataset.q; send(); });
     $$('[data-insert-idx]', inner).forEach(b => b.onclick = () => {
@@ -1136,10 +1350,13 @@ function viewChat() {
   async function send() {
     const t = inp.value.trim();
     if (!t || K.busy) return;
+    // last few turns so follow-ups ("now in Java", "why?") keep context
+    const history = K.msgs.slice(-8).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }))
+      .filter(m => m.content && !m.content.startsWith('Something went wrong'));
     K.msgs.push({ role: 'user', text: t }); inp.value = ''; inp.style.height = 'auto';
     K.busy = true; paint();
     try {
-      const r = await POST('/agent/message', { message: t, ...(K.roomId ? { room_id: K.roomId } : {}) });
+      const r = await POST('/agent/message', { message: t, history, ...(K.roomId ? { room_id: K.roomId } : {}) });
       const d = r.data || {};
       let reply = d.response || d.summary || '';
       if (r.intent === 'progress' && d.total_submissions !== undefined) {
