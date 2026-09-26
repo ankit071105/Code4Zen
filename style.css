@@ -1054,7 +1054,7 @@ h1,h2,h3,h4{letter-spacing:-.02em}
 .app-step{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--ink-2);line-height:1.5}
 .app-step span{width:22px;height:22px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;font-size:11px;font-weight:700;
   background:var(--cyan-soft);color:var(--cyan-dark)}
-.app-modal .store-btn{background:#0B0E14}
+.app-modal .store-btn:not(.store-btn-apk):not(.store-soon){background:#0B0E14}
 
 /* ─── auth / login v2 ─── */
 .auth-visual{padding:48px 56px;background:#07090E}
@@ -1118,3 +1118,17 @@ h1,h2,h3,h4{letter-spacing:-.02em}
 .modal{border:1px solid var(--line);border-radius:20px}
 
 @media(prefers-reduced-motion:reduce){.hero-glow,.av-orb,.phone-frame,.av-chip{animation:none!important;opacity:1}}
+
+/* app: coming-soon + APK states */
+.store-btn-apk{background:linear-gradient(135deg,#4338CA,#6D28D9);border-color:rgba(255,255,255,.25)}
+.store-btn-apk .store-ic{color:#fff}
+.store-soon{cursor:default;background:rgba(255,255,255,.06);border:1px dashed rgba(255,255,255,.3)}
+.store-soon:hover{transform:none;box-shadow:none}
+.store-soon .store-ic{color:#A5B4FC}
+.app-modal .store-soon{background:var(--surface-2);color:var(--ink);border-color:var(--line-2)}
+.app-soon{text-align:center;padding:22px 18px;border-radius:var(--r);background:var(--surface-2);border:1px solid var(--line)}
+.app-soon-ic{width:52px;height:52px;margin:0 auto 12px;border-radius:14px;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(135deg,#4F46E5,#7C3AED);box-shadow:0 12px 24px -12px rgba(79,70,229,.8);animation:floaty 4s ease-in-out infinite}
+.app-soon-ic svg{width:24px;height:24px}
+.app-soon h4{font-size:15px;margin-bottom:6px}
+.app-soon p{font-size:13px;color:var(--muted);line-height:1.6;max-width:340px;margin:0 auto}

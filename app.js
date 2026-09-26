@@ -156,23 +156,33 @@ function countUp(root) {
 }
 
 /* ───────────── MOBILE APP LINKS ─────────────
-   Set in config.js:  APK_URL (direct .apk download) and/or PLAY_STORE_URL.
-   With neither set, users are sent to a Play Store search for "CodeZen". */
+   Set in config.js:
+     APK_URL        → direct .apk download (use this until the app is published)
+     PLAY_STORE_URL → only once the app is live on Google Play
+   Nothing set → "Coming soon" state; no Play Store branding is ever shown
+   unless PLAY_STORE_URL is set. */
 const APP = {
   apk: () => (window.CZ_CONFIG && window.CZ_CONFIG.APK_URL) || '',
   store: () => (window.CZ_CONFIG && window.CZ_CONFIG.PLAY_STORE_URL) || '',
-  search: () => 'https://play.google.com/store/search?q=' + encodeURIComponent((window.CZ_CONFIG && window.CZ_CONFIG.APP_SEARCH) || 'CodeZen') + '&c=apps',
-  best: () => APP.store() || APP.apk() || APP.search(),
+  best: () => APP.store() || APP.apk() || '',
+  available: () => !!(APP.store() || APP.apk()),
 };
-const storeButtons = (cls = '') => `
+const storeButtons = (cls = '') => {
+  if (!APP.available()) return `
+    <div class="store-row ${cls}">
+      <span class="store-btn store-soon"><span class="store-ic">${I.android}</span>
+        <span><small>ANDROID APP</small><b>Coming soon</b></span></span>
+    </div>`;
+  return `
   <div class="store-row ${cls}">
-    <a class="store-btn" href="${esc(APP.store() || APP.search())}" target="_blank" rel="noopener">
+    ${APP.apk() ? `<a class="store-btn store-btn-apk" href="${esc(APP.apk())}" download rel="noopener">
+      <span class="store-ic">${I.download}</span>
+      <span><small>DOWNLOAD FOR</small><b>Android (APK)</b></span></a>` : ''}
+    ${APP.store() ? `<a class="store-btn" href="${esc(APP.store())}" target="_blank" rel="noopener">
       <span class="store-ic">${I.gplay}</span>
-      <span><small>${APP.store() ? 'GET IT ON' : 'SEARCH ON'}</small><b>Google Play</b></span></a>
-    ${APP.apk() ? `<a class="store-btn store-btn-alt" href="${esc(APP.apk())}" download rel="noopener">
-      <span class="store-ic">${I.android}</span>
-      <span><small>DIRECT DOWNLOAD</small><b>Android APK</b></span></a>` : ''}
+      <span><small>GET IT ON</small><b>Google Play</b></span></a>` : ''}
   </div>`;
+};
 
 let _qrLib = null;
 function loadQr() {
@@ -197,6 +207,9 @@ async function drawQr(el, text) {
 
 function appModal() {
   const link = APP.best();
+  const ready = APP.available();
+  const step2 = APP.apk() ? 'Download the APK and install it (allow "Install unknown apps" when Android asks)'
+    : 'Install CodeZen from Google Play';
   const m = modal(`
     <div class="app-modal">
       <div class="app-modal-head">
@@ -204,19 +217,24 @@ function appModal() {
         <div><h3>CodeZen for Android</h3>
           <div class="tiny muted">Practice DSA, mock interviews & AI review on the go</div></div>
       </div>
+      ${ready ? `
       <div class="app-modal-body">
         <div class="qr-box" id="qrBox"><span class="spinner"></span></div>
         <div class="app-modal-side">
           <div class="app-step"><span>1</span><div>Scan the QR with your phone camera</div></div>
-          <div class="app-step"><span>2</span><div>${APP.store() ? 'Install from Google Play' : APP.apk() ? 'Download & install the APK' : 'Search <b>CodeZen</b> on Google Play'}</div></div>
+          <div class="app-step"><span>2</span><div>${step2}</div></div>
           <div class="app-step"><span>3</span><div>Sign in with the same account — your rooms & progress sync</div></div>
         </div>
       </div>
-      ${storeButtons('store-row-full')}
-      ${APP.apk() ? `<div class="tiny muted" style="margin-top:10px">Installing an APK? Allow "Install unknown apps" for your browser when Android asks.</div>` : ''}
+      ${storeButtons('store-row-full')}` : `
+      <div class="app-soon">
+        <div class="app-soon-ic">${I.phone}</div>
+        <h4>The Android app is on its way</h4>
+        <p>We're polishing the final build. Everything you do here — rooms, progress, saved work — will be waiting in the app with the same account.</p>
+      </div>`}
       <button class="btn btn-ghost" style="width:100%;margin-top:16px" onclick="this.closest('.modal-bg').remove()">Close</button>
     </div>`);
-  drawQr($('#qrBox', m), link);
+  if (ready) drawQr($('#qrBox', m), link);
 }
 
 /* ───────────── API ───────────── */
@@ -345,7 +363,7 @@ function shell(title, sub, body, opts = {}) {
       </nav>
       <button class="side-app" onclick="appModal()">
         <span class="side-app-ic">${I.phone}</span>
-        <span class="side-app-txt"><b>Get the app</b><small>CodeZen for Android</small></span>
+        <span class="side-app-txt"><b>Get the app</b><small>${APP.available() ? 'CodeZen for Android' : 'Android · coming soon'}</small></span>
         <span class="side-app-arrow">${I.arrow}</span>
       </button>
       <div class="side-foot">
@@ -415,7 +433,7 @@ function viewLogin() {
             </div>
 
             <div class="av-store">
-              <div class="av-store-label">${I.phone} Also on Android</div>
+              <div class="av-store-label">${I.phone} ${APP.available() ? 'Also on Android' : 'Android app'}</div>
               ${storeButtons()}
             </div>
           </div>
@@ -501,7 +519,7 @@ async function viewHome() {
     <div id="roomList">${skelRows(3)}</div>
     <div class="app-banner reveal">
       <div class="app-banner-text">
-        <span class="hero-kicker">${I.phone} Mobile app</span>
+        <span class="hero-kicker">${I.phone} ${APP.available() ? 'Mobile app' : 'Mobile app · coming soon'}</span>
         <h3>Take CodeZen with you</h3>
         <p>Mock interviews on the commute, AI review between classes. Same account, synced rooms and progress.</p>
         ${storeButtons()}
@@ -516,10 +534,10 @@ async function viewHome() {
             <div class="ps-card"><i style="width:50%"></i><i style="width:35%"></i></div>
           </div>
         </div>
-        <button class="qr-mini" id="homeQr" onclick="appModal()" title="Scan to get the app"><span class="spinner"></span></button>
+        ${APP.available() ? `<button class="qr-mini" id="homeQr" onclick="appModal()" title="Scan to get the app"><span class="spinner"></span></button>` : ''}
       </div>
     </div>`);
-  drawQr($('#homeQr'), APP.best());
+  if (APP.available()) drawQr($('#homeQr'), APP.best());
 
   try {
     const [rooms, prog] = await Promise.all([
